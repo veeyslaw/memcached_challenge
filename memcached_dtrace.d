@@ -272,6 +272,15 @@ provider memcached {
    probe command__cas(int connid, const char *key, int keylen, int size, int64_t casid);
 
    /**
+    * Fired for an mult command.
+    * @param connid connection id
+    * @param key the requested key
+    * @param keylen length of the key
+    * @param val the new value
+    */
+   probe command__mult(int connid, const char *key, int keylen, int64_t val);
+
+   /**
     * Fired for an incr command.
     * @param connid connection id
     * @param key the requested key

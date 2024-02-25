@@ -24,6 +24,8 @@
 #define MEMCACHED_COMMAND_GET_ENABLED() (0)
 #define MEMCACHED_COMMAND_TOUCH(arg0, arg1, arg2, arg3, arg4)
 #define MEMCACHED_COMMAND_TOUCH_ENABLED() (0)
+#define MEMCACHED_COMMAND_MULT(arg0, arg1, arg2, arg3)
+#define MEMCACHED_COMMAND_MULT_ENABLED() (0)
 #define MEMCACHED_COMMAND_INCR(arg0, arg1, arg2, arg3)
 #define MEMCACHED_COMMAND_INCR_ENABLED() (0)
 #define MEMCACHED_COMMAND_PREPEND(arg0, arg1, arg2, arg3, arg4)

@@ -14,6 +14,7 @@
  *      Brad Fitzpatrick <brad@danga.com>
  */
 #include "memcached.h"
+#include "protocol_binary.h"
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -981,7 +982,7 @@ static void write_bin_error(conn *c, protocol_binary_response_status err, int sw
         errstr = "Too large.";
         break;
     case PROTOCOL_BINARY_RESPONSE_DELTA_BADVAL:
-        errstr = "Non-numeric server-side value for incr or decr";
+        errstr = "Non-numeric server-side value for incr, decr or mult";
         break;
     case PROTOCOL_BINARY_RESPONSE_NOT_STORED:
         errstr = "Not stored.";
@@ -1028,16 +1029,16 @@ static void write_bin_response(conn *c, void *d, int hlen, int keylen, int dlen)
     }
 }
 
-static void complete_incr_bin(conn *c) {
+static void complete_arithm_bin(conn *c) {
     item *it;
     char *key;
     size_t nkey;
     /* Weird magic in add_delta forces me to pad here */
-    char tmpbuf[INCR_MAX_STORAGE_LEN];
+    char tmpbuf[ARITHM_MAX_STORAGE_LEN];
     uint64_t cas = 0;
 
-    protocol_binary_response_incr* rsp = (protocol_binary_response_incr*)c->wbuf;
-    protocol_binary_request_incr* req = binary_get_request(c);
+    protocol_binary_response_arithm* rsp = (protocol_binary_response_arithm*)c->wbuf;
+    protocol_binary_request_arithm* req = binary_get_request(c);
 
     assert(c != NULL);
     assert(c->wsize >= sizeof(*rsp));
@@ -1051,7 +1052,7 @@ static void complete_incr_bin(conn *c) {
 
     if (settings.verbose > 1) {
         int i;
-        fprintf(stderr, "incr ");
+        fprintf(stderr, "arithm ");
 
         for (i = 0; i < nkey; i++) {
             fprintf(stderr, "%c", key[i]);
@@ -1065,7 +1066,19 @@ static void complete_incr_bin(conn *c) {
     if (c->binary_header.request.cas != 0) {
         cas = c->binary_header.request.cas;
     }
-    switch(add_delta(c, key, nkey, c->cmd == PROTOCOL_BINARY_CMD_INCREMENT,
+    short arithm;
+    switch(c->cmd) {
+    case PROTOCOL_BINARY_CMD_MULTIPLY:
+        arithm = PROTOCOL_ARITHMETIC_MULTIPLY;
+        break;
+    case PROTOCOL_BINARY_CMD_INCREMENT:
+        arithm = PROTOCOL_ARITHMETIC_INCREMENT;
+        break;
+    default:
+        arithm = PROTOCOL_ARITHMETIC_DECREMENT;
+        break;
+    }
+    switch(add_delta(c, key, nkey, arithm,
                      req->message.body.delta, tmpbuf,
                      &cas)) {
     case OK:
@@ -1087,10 +1100,10 @@ static void complete_incr_bin(conn *c) {
             /* Save some room for the response */
             rsp->message.body.value = htonll(req->message.body.initial);
             it = item_alloc(key, nkey, 0, realtime(req->message.body.expiration),
-                            INCR_MAX_STORAGE_LEN);
+                            ARITHM_MAX_STORAGE_LEN);
 
             if (it != NULL) {
-                snprintf(ITEM_data(it), INCR_MAX_STORAGE_LEN, "%llu",
+                snprintf(ITEM_data(it), ARITHM_MAX_STORAGE_LEN, "%llu",
                          (unsigned long long)req->message.body.initial);
 
                 if (store_item(it, NREAD_ADD, c)) {
@@ -1105,10 +1118,16 @@ static void complete_incr_bin(conn *c) {
             }
         } else {
             pthread_mutex_lock(&c->thread->stats.mutex);
-            if (c->cmd == PROTOCOL_BINARY_CMD_INCREMENT) {
+            switch(arithm) {
+            case PROTOCOL_ARITHMETIC_MULTIPLY:
+                c->thread->stats.mult_misses++;
+                break;
+            case PROTOCOL_ARITHMETIC_INCREMENT:
                 c->thread->stats.incr_misses++;
-            } else {
+                break;
+            default:
                 c->thread->stats.decr_misses++;
+                break;
             }
             pthread_mutex_unlock(&c->thread->stats.mutex);
 
@@ -1822,6 +1841,9 @@ static void dispatch_bin_command(conn *c) {
     case PROTOCOL_BINARY_CMD_DELETEQ:
         c->cmd = PROTOCOL_BINARY_CMD_DELETE;
         break;
+    case PROTOCOL_BINARY_CMD_MULTIPLYQ:
+        c->cmd = PROTOCOL_BINARY_CMD_MULTIPLY;
+        break;
     case PROTOCOL_BINARY_CMD_INCREMENTQ:
         c->cmd = PROTOCOL_BINARY_CMD_INCREMENT;
         break;
@@ -1904,10 +1926,11 @@ static void dispatch_bin_command(conn *c) {
                 protocol_error = 1;
             }
             break;
+        case PROTOCOL_BINARY_CMD_MULTIPLY:
         case PROTOCOL_BINARY_CMD_INCREMENT:
         case PROTOCOL_BINARY_CMD_DECREMENT:
             if (keylen > 0 && extlen == 20 && bodylen == (keylen + extlen)) {
-                bin_read_key(c, bin_reading_incr_header, 20);
+                bin_read_key(c, bin_reading_arithm_header, 20);
             } else {
                 protocol_error = 1;
             }
@@ -2206,8 +2229,8 @@ static void complete_nread_binary(conn *c) {
     case bin_reading_del_header:
         process_bin_delete(c);
         break;
-    case bin_reading_incr_header:
-        complete_incr_bin(c);
+    case bin_reading_arithm_header:
+        complete_arithm_bin(c);
         break;
     case bin_read_flush_exptime:
         process_bin_flush(c);
@@ -2564,6 +2587,8 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
     APPEND_STAT("get_misses", "%llu", (unsigned long long)thread_stats.get_misses);
     APPEND_STAT("delete_misses", "%llu", (unsigned long long)thread_stats.delete_misses);
     APPEND_STAT("delete_hits", "%llu", (unsigned long long)slab_stats.delete_hits);
+    APPEND_STAT("mult_misses", "%llu", (unsigned long long)thread_stats.mult_misses);
+    APPEND_STAT("mult_hits", "%llu", (unsigned long long)slab_stats.mult_hits);
     APPEND_STAT("incr_misses", "%llu", (unsigned long long)thread_stats.incr_misses);
     APPEND_STAT("incr_hits", "%llu", (unsigned long long)slab_stats.incr_hits);
     APPEND_STAT("decr_misses", "%llu", (unsigned long long)thread_stats.decr_misses);
@@ -2989,8 +3014,8 @@ static void process_touch_command(conn *c, token_t *tokens, const size_t ntokens
     }
 }
 
-static void process_arithmetic_command(conn *c, token_t *tokens, const size_t ntokens, const bool incr) {
-    char temp[INCR_MAX_STORAGE_LEN];
+static void process_arithmetic_command(conn *c, token_t *tokens, const size_t ntokens, const short arithm) {
+    char temp[ARITHM_MAX_STORAGE_LEN];
     uint64_t delta;
     char *key;
     size_t nkey;
@@ -3012,22 +3037,28 @@ static void process_arithmetic_command(conn *c, token_t *tokens, const size_t nt
         return;
     }
 
-    switch(add_delta(c, key, nkey, incr, delta, temp, NULL)) {
+    switch(add_delta(c, key, nkey, arithm, delta, temp, NULL)) {
     case OK:
         out_string(c, temp);
         break;
     case NON_NUMERIC:
-        out_string(c, "CLIENT_ERROR cannot increment or decrement non-numeric value");
+        out_string(c, "CLIENT_ERROR cannot increment, decrement or multiply non-numeric value");
         break;
     case EOM:
         out_string(c, "SERVER_ERROR out of memory");
         break;
     case DELTA_ITEM_NOT_FOUND:
         pthread_mutex_lock(&c->thread->stats.mutex);
-        if (incr) {
+        switch(arithm) {
+        case PROTOCOL_ARITHMETIC_MULTIPLY:
+            c->thread->stats.mult_misses++;
+            break;
+        case PROTOCOL_ARITHMETIC_INCREMENT:
             c->thread->stats.incr_misses++;
-        } else {
+            break;
+        default:
             c->thread->stats.decr_misses++;
+            break;
         }
         pthread_mutex_unlock(&c->thread->stats.mutex);
 
@@ -3041,16 +3072,16 @@ static void process_arithmetic_command(conn *c, token_t *tokens, const size_t nt
 /*
  * adds a delta value to a numeric item.
  *
- * c     connection requesting the operation
- * it    item to adjust
- * incr  true to increment value, false to decrement
- * delta amount to adjust value by
- * buf   buffer for response string
+ * c      connection requesting the operation
+ * it     item to adjust
+ * arithm value indicating arithmetic command (mult / incr / decr)
+ * delta  amount to adjust value by
+ * buf    buffer for response string
  *
  * returns a response string to send back to the client.
  */
 enum delta_result_type do_add_delta(conn *c, const char *key, const size_t nkey,
-                                    const bool incr, const int64_t delta,
+                                    const short arithm, const int64_t delta,
                                     char *buf, uint64_t *cas,
                                     const uint32_t hv) {
     char *ptr;
@@ -3075,10 +3106,16 @@ enum delta_result_type do_add_delta(conn *c, const char *key, const size_t nkey,
         return NON_NUMERIC;
     }
 
-    if (incr) {
+    switch (arithm) {
+    case PROTOCOL_ARITHMETIC_MULTIPLY:
+        value *= delta;
+        MEMCACHED_COMMAND_MULT(c->sfd, ITEM_key(it), it->nkey, value);
+        break;
+    case PROTOCOL_ARITHMETIC_INCREMENT:
         value += delta;
         MEMCACHED_COMMAND_INCR(c->sfd, ITEM_key(it), it->nkey, value);
-    } else {
+        break;
+    default:
         if(delta > value) {
             value = 0;
         } else {
@@ -3088,14 +3125,20 @@ enum delta_result_type do_add_delta(conn *c, const char *key, const size_t nkey,
     }
 
     pthread_mutex_lock(&c->thread->stats.mutex);
-    if (incr) {
+    switch (arithm) {
+    case PROTOCOL_ARITHMETIC_MULTIPLY:
+        c->thread->stats.slab_stats[it->slabs_clsid].mult_hits++;
+        break;
+    case PROTOCOL_ARITHMETIC_INCREMENT:
         c->thread->stats.slab_stats[it->slabs_clsid].incr_hits++;
-    } else {
+        break;
+    default:
         c->thread->stats.slab_stats[it->slabs_clsid].decr_hits++;
+        break;
     }
     pthread_mutex_unlock(&c->thread->stats.mutex);
 
-    snprintf(buf, INCR_MAX_STORAGE_LEN, "%llu", (unsigned long long)value);
+    snprintf(buf, ARITHM_MAX_STORAGE_LEN, "%llu", (unsigned long long)value);
     res = strlen(buf);
     if (res + 2 > it->nbytes || it->refcount != 1) { /* need to realloc */
         item *new_it;
@@ -3261,9 +3304,13 @@ static void process_command(conn *c, char *command) {
 
         process_update_command(c, tokens, ntokens, comm, true);
 
+    } else if ((ntokens == 4 || ntokens == 5) && (strcmp(tokens[COMMAND_TOKEN].value, "mult") == 0)) {
+
+        process_arithmetic_command(c, tokens, ntokens, PROTOCOL_ARITHMETIC_MULTIPLY);
+
     } else if ((ntokens == 4 || ntokens == 5) && (strcmp(tokens[COMMAND_TOKEN].value, "incr") == 0)) {
 
-        process_arithmetic_command(c, tokens, ntokens, 1);
+        process_arithmetic_command(c, tokens, ntokens, PROTOCOL_ARITHMETIC_INCREMENT);
 
     } else if (ntokens >= 3 && (strcmp(tokens[COMMAND_TOKEN].value, "gets") == 0)) {
 
@@ -3271,7 +3318,7 @@ static void process_command(conn *c, char *command) {
 
     } else if ((ntokens == 4 || ntokens == 5) && (strcmp(tokens[COMMAND_TOKEN].value, "decr") == 0)) {
 
-        process_arithmetic_command(c, tokens, ntokens, 0);
+        process_arithmetic_command(c, tokens, ntokens, PROTOCOL_ARITHMETIC_DECREMENT);
 
     } else if (ntokens >= 3 && ntokens <= 5 && (strcmp(tokens[COMMAND_TOKEN].value, "delete") == 0)) {
 

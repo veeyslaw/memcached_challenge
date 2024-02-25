@@ -26,8 +26,8 @@
 /** Maximum length of a key. */
 #define KEY_MAX_LENGTH 250
 
-/** Size of an incr buf. */
-#define INCR_MAX_STORAGE_LEN 24
+/** Size of an arithmetic buf. */
+#define ARITHM_MAX_STORAGE_LEN 24
 
 #define DATA_BUFFER_SIZE 2048
 #define UDP_READ_BUFFER_SIZE 65536
@@ -161,7 +161,7 @@ enum bin_substates {
     bin_reading_get_key,
     bin_reading_stat,
     bin_reading_del_header,
-    bin_reading_incr_header,
+    bin_reading_arithm_header,
     bin_read_flush_exptime,
     bin_reading_sasl_auth,
     bin_reading_sasl_auth_data,
@@ -213,6 +213,7 @@ struct slab_stats {
     uint64_t  delete_hits;
     uint64_t  cas_hits;
     uint64_t  cas_badval;
+    uint64_t  mult_hits;
     uint64_t  incr_hits;
     uint64_t  decr_hits;
 };
@@ -227,6 +228,7 @@ struct thread_stats {
     uint64_t          touch_cmds;
     uint64_t          touch_misses;
     uint64_t          delete_misses;
+    uint64_t          mult_misses;
     uint64_t          incr_misses;
     uint64_t          decr_misses;
     uint64_t          cas_misses;
@@ -481,7 +483,7 @@ extern struct slab_rebalance slab_rebal;
  */
 void do_accept_new_conns(const bool do_accept);
 enum delta_result_type do_add_delta(conn *c, const char *key,
-                                    const size_t nkey, const bool incr,
+                                    const size_t nkey, const short arithm,
                                     const int64_t delta, char *buf,
                                     uint64_t *cas, const uint32_t hv);
 enum store_item_type do_store_item(item *item, int comm, conn* c, const uint32_t hv);
@@ -517,7 +519,7 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags, in
 
 /* Lock wrappers for cache functions that are called from main loop. */
 enum delta_result_type add_delta(conn *c, const char *key,
-                                 const size_t nkey, const int incr,
+                                 const size_t nkey, const short arithm,
                                  const int64_t delta, char *buf,
                                  uint64_t *cas);
 void accept_new_conns(const bool do_accept);

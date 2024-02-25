@@ -574,7 +574,7 @@ void item_update(item *item) {
  * Does arithmetic on a numeric item value.
  */
 enum delta_result_type add_delta(conn *c, const char *key,
-                                 const size_t nkey, int incr,
+                                 const size_t nkey, const short arithm,
                                  const int64_t delta, char *buf,
                                  uint64_t *cas) {
     enum delta_result_type ret;
@@ -582,7 +582,7 @@ enum delta_result_type add_delta(conn *c, const char *key,
 
     hv = hash(key, nkey, 0);
     item_lock(hv);
-    ret = do_add_delta(c, key, nkey, incr, delta, buf, cas, hv);
+    ret = do_add_delta(c, key, nkey, arithm, delta, buf, cas, hv);
     item_unlock(hv);
     return ret;
 }
@@ -666,6 +666,7 @@ void threadlocal_stats_reset(void) {
         threads[ii].stats.touch_cmds = 0;
         threads[ii].stats.touch_misses = 0;
         threads[ii].stats.delete_misses = 0;
+        threads[ii].stats.mult_misses = 0;
         threads[ii].stats.incr_misses = 0;
         threads[ii].stats.decr_misses = 0;
         threads[ii].stats.cas_misses = 0;
@@ -681,6 +682,7 @@ void threadlocal_stats_reset(void) {
             threads[ii].stats.slab_stats[sid].get_hits = 0;
             threads[ii].stats.slab_stats[sid].touch_hits = 0;
             threads[ii].stats.slab_stats[sid].delete_hits = 0;
+            threads[ii].stats.slab_stats[sid].mult_hits = 0;
             threads[ii].stats.slab_stats[sid].incr_hits = 0;
             threads[ii].stats.slab_stats[sid].decr_hits = 0;
             threads[ii].stats.slab_stats[sid].cas_hits = 0;
@@ -708,6 +710,7 @@ void threadlocal_stats_aggregate(struct thread_stats *stats) {
         stats->delete_misses += threads[ii].stats.delete_misses;
         stats->decr_misses += threads[ii].stats.decr_misses;
         stats->incr_misses += threads[ii].stats.incr_misses;
+        stats->mult_misses += threads[ii].stats.mult_misses;
         stats->cas_misses += threads[ii].stats.cas_misses;
         stats->bytes_read += threads[ii].stats.bytes_read;
         stats->bytes_written += threads[ii].stats.bytes_written;
@@ -729,6 +732,8 @@ void threadlocal_stats_aggregate(struct thread_stats *stats) {
                 threads[ii].stats.slab_stats[sid].decr_hits;
             stats->slab_stats[sid].incr_hits +=
                 threads[ii].stats.slab_stats[sid].incr_hits;
+            stats->slab_stats[sid].mult_hits +=
+                threads[ii].stats.slab_stats[sid].mult_hits;
             stats->slab_stats[sid].cas_hits +=
                 threads[ii].stats.slab_stats[sid].cas_hits;
             stats->slab_stats[sid].cas_badval +=
@@ -746,6 +751,7 @@ void slab_stats_aggregate(struct thread_stats *stats, struct slab_stats *out) {
     out->get_hits = 0;
     out->touch_hits = 0;
     out->delete_hits = 0;
+    out->mult_hits = 0;
     out->incr_hits = 0;
     out->decr_hits = 0;
     out->cas_hits = 0;
@@ -758,6 +764,7 @@ void slab_stats_aggregate(struct thread_stats *stats, struct slab_stats *out) {
         out->delete_hits += stats->slab_stats[sid].delete_hits;
         out->decr_hits += stats->slab_stats[sid].decr_hits;
         out->incr_hits += stats->slab_stats[sid].incr_hits;
+        out->mult_hits += stats->slab_stats[sid].mult_hits;
         out->cas_hits += stats->slab_stats[sid].cas_hits;
         out->cas_badval += stats->slab_stats[sid].cas_badval;
     }
