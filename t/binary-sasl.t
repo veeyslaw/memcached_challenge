@@ -51,6 +51,7 @@ use constant CMD_SET        => 0x01;
 use constant CMD_ADD        => 0x02;
 use constant CMD_REPLACE    => 0x03;
 use constant CMD_DELETE     => 0x04;
+use constant CMD_MULT       => 0x40;
 use constant CMD_INCR       => 0x05;
 use constant CMD_DECR       => 0x06;
 use constant CMD_QUIT       => 0x07;
@@ -67,6 +68,7 @@ use constant CMD_SETQ       => 0x11;
 use constant CMD_ADDQ       => 0x12;
 use constant CMD_REPLACEQ   => 0x13;
 use constant CMD_DELETEQ    => 0x14;
+use constant CMD_MULTIPLYQ  => 0x41;
 use constant CMD_INCREMENTQ => 0x15;
 use constant CMD_DECREMENTQ => 0x16;
 use constant CMD_QUITQ      => 0x17;
@@ -84,7 +86,7 @@ use constant ERR_AUTH_ERROR   => 0x20;
 # the same format, since they _could_ differ in the future.
 use constant REQ_PKT_FMT      => "CCnCCnNNNN";
 use constant RES_PKT_FMT      => "CCnCCnNNNN";
-use constant INCRDECR_PKT_FMT => "NNNNN";
+use constant ARITHM_PKT_FMT   => "NNNNN";
 use constant MIN_RECV_BYTES   => length(pack(RES_PKT_FMT));
 use constant REQ_MAGIC        => 0x80;
 use constant RES_MAGIC        => 0x81;
@@ -400,7 +402,7 @@ sub _do_command {
     return ($status, $rv, $rcas);
 }
 
-sub _incrdecr_header {
+sub _arithm_header {
     my $self = shift;
     my ($amt, $init, $exp) = @_;
 
@@ -410,18 +412,18 @@ sub _incrdecr_header {
     my $init_hi = int($init / 2 ** 32);
     my $init_lo = int($init % 2 ** 32);
 
-    my $extra_header = pack(::INCRDECR_PKT_FMT, $amt_hi, $amt_lo, $init_hi,
+    my $extra_header = pack(::ARITHM_PKT_FMT, $amt_hi, $amt_lo, $init_hi,
                             $init_lo, $exp);
 
     return $extra_header;
 }
 
-sub _incrdecr {
+sub _arithm {
     my $self = shift;
     my ($cmd, $key, $amt, $init, $exp) = @_;
 
     my ($status, $data, undef) = $self->_do_command($cmd, $key, '',
-                                           $self->_incrdecr_header($amt, $init, $exp));
+                                           $self->_arithm_header($amt, $init, $exp));
 
     my $header = substr $data, 0, 8, '';
     my ($resp_hi, $resp_lo) = unpack "NN", $header;
@@ -430,13 +432,13 @@ sub _incrdecr {
     return $resp;
 }
 
-sub silent_incrdecr {
+sub silent_arithm {
     my $self = shift;
     my ($cmd, $key, $amt, $init, $exp) = @_;
     my $opaque = 8275753;
 
     $mc->send_silent($cmd, $key, '', $opaque,
-                     $mc->_incrdecr_header($amt, $init, $exp));
+                     $mc->_arithm_header($amt, $init, $exp));
 }
 
 sub stats {
@@ -549,6 +551,16 @@ sub delete {
     return $self->_do_command(::CMD_DELETE, $key, '');
 }
 
+sub mult {
+    my $self = shift;
+    my ($key, $amt, $init, $exp) = @_;
+    $amt = 1 unless defined $amt;
+    $init = 0 unless defined $init;
+    $exp = 0 unless defined $exp;
+
+    return $self->_arithm(::CMD_MULT, $key, $amt, $init, $exp);
+}
+
 sub incr {
     my $self = shift;
     my ($key, $amt, $init, $exp) = @_;
@@ -556,7 +568,7 @@ sub incr {
     $init = 0 unless defined $init;
     $exp = 0 unless defined $exp;
 
-    return $self->_incrdecr(::CMD_INCR, $key, $amt, $init, $exp);
+    return $self->_arithm(::CMD_INCR, $key, $amt, $init, $exp);
 }
 
 sub decr {
@@ -566,7 +578,7 @@ sub decr {
     $init = 0 unless defined $init;
     $exp = 0 unless defined $exp;
 
-    return $self->_incrdecr(::CMD_DECR, $key, $amt, $init, $exp);
+    return $self->_arithm(::CMD_DECR, $key, $amt, $init, $exp);
 }
 
 sub noop {

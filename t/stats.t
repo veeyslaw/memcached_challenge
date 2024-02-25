@@ -30,6 +30,8 @@ my $sock = $server->sock;
 ## STAT get_misses 0
 ## STAT delete_misses 0
 ## STAT delete_hits 0
+## STAT mult_misses 0
+## STAT mult_hits 0
 ## STAT incr_misses 0
 ## STAT incr_hits 0
 ## STAT decr_misses 0
@@ -58,11 +60,11 @@ my $sock = $server->sock;
 my $stats = mem_stats($sock);
 
 # Test number of keys
-is(scalar(keys(%$stats)), 48, "48 stats values");
+is(scalar(keys(%$stats)), 50, "50 stats values");
 
 # Test initial state
 foreach my $key (qw(curr_items total_items bytes cmd_get cmd_set get_hits evictions get_misses
-                 bytes_written delete_hits delete_misses incr_hits incr_misses decr_hits
+                 bytes_written delete_hits delete_misses mult_hits mult_misses incr_hits incr_misses decr_hits
                  decr_misses listen_disabled_num)) {
     is($stats->{$key}, 0, "initial $key is zero");
 }

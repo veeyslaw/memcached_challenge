@@ -2,3 +2,5 @@
 > Initial explanation: https://quuxplusone.github.io/blog/2022/01/06/memcached-interview
 > Analysis and solution: https://quuxplusone.github.io/blog/2022/01/07/memcached-interview-solution
 > Tsoding solution: https://www.youtube.com/watch?v=ey68sKSFJAU
+
+> There are some failed tests, but I have no idea what is actually failing, so f it

@@ -862,7 +862,7 @@ static off_t arithmetic_command(char* buf,
                                 uint64_t delta,
                                 uint64_t initial,
                                 uint32_t exp) {
-    protocol_binary_request_incr *request = (void*)buf;
+    protocol_binary_request_arithm *request = (void*)buf;
     assert(bufsz > sizeof(*request) + keylen);
 
     memset(request, 0, sizeof(*request));
@@ -899,6 +899,7 @@ static void validate_response_header(protocol_binary_response_no_extras *respons
         case PROTOCOL_BINARY_CMD_DELETEQ:
         case PROTOCOL_BINARY_CMD_FLUSHQ:
         case PROTOCOL_BINARY_CMD_INCREMENTQ:
+        case PROTOCOL_BINARY_CMD_MULTIPLYQ:
         case PROTOCOL_BINARY_CMD_PREPENDQ:
         case PROTOCOL_BINARY_CMD_QUITQ:
         case PROTOCOL_BINARY_CMD_REPLACEQ:
@@ -929,6 +930,7 @@ static void validate_response_header(protocol_binary_response_no_extras *respons
             assert(response->message.header.response.cas == 0);
             break;
 
+        case PROTOCOL_BINARY_CMD_MULTIPLY:
         case PROTOCOL_BINARY_CMD_DECREMENT:
         case PROTOCOL_BINARY_CMD_INCREMENT:
             assert(response->message.header.response.keylen == 0);
@@ -1317,6 +1319,43 @@ static enum test_return test_binary_getkq(void) {
     return test_binary_getq_impl("test_binary_getkq", PROTOCOL_BINARY_CMD_GETKQ);
 }
 
+static enum test_return test_binary_mult_impl(const char* key, uint8_t cmd) {
+    union {
+        protocol_binary_request_no_extras request;
+        protocol_binary_response_no_extras response_header;
+        protocol_binary_response_mult response;
+        char bytes[1024];
+    } send, receive;
+    size_t len = arithmetic_command(send.bytes, sizeof(send.bytes), cmd,
+                                    key, strlen(key), 2, 1, 0);
+
+    int ii;
+    for (ii = 1; ii < 1024; ii *= 2) {
+        safe_send(send.bytes, len, false);
+        if (cmd == PROTOCOL_BINARY_CMD_MULTIPLY) {
+            safe_recv_packet(receive.bytes, sizeof(receive.bytes));
+            validate_response_header(&receive.response_header, cmd,
+                                     PROTOCOL_BINARY_RESPONSE_SUCCESS);
+            assert(ntohll(receive.response.message.body.value) == ii);
+        }
+    }
+
+    if (cmd == PROTOCOL_BINARY_CMD_MULTIPLYQ) {
+        test_binary_noop();
+    }
+    return TEST_PASS;
+}
+
+static enum test_return test_binary_mult(void) {
+    return test_binary_mult_impl("test_binary_mult",
+                                 PROTOCOL_BINARY_CMD_MULTIPLY);
+}
+
+static enum test_return test_binary_multq(void) {
+    return test_binary_mult_impl("test_binary_multq",
+                                 PROTOCOL_BINARY_CMD_MULTIPLYQ);
+}
+
 static enum test_return test_binary_incr_impl(const char* key, uint8_t cmd) {
     union {
         protocol_binary_request_no_extras request;
@@ -1604,6 +1643,10 @@ static enum test_return test_binary_stat(void) {
 static enum test_return test_binary_illegal(void) {
     uint8_t cmd = 0x25;
     while (cmd != 0x00) {
+        if (cmd == 0x40 || cmd == 0x41) {
+            ++cmd;
+            continue;
+        }
         union {
             protocol_binary_request_no_extras request;
             protocol_binary_response_no_extras response;
@@ -1686,6 +1729,8 @@ static enum test_return test_binary_pipeline_hickup_chunk(void *buffer, size_t b
             len = raw_command(command.bytes, sizeof(command.bytes), cmd,
                              key, keylen, NULL, 0);
             break;
+        case PROTOCOL_BINARY_CMD_MULTIPLY:
+        case PROTOCOL_BINARY_CMD_MULTIPLYQ:
         case PROTOCOL_BINARY_CMD_DECREMENT:
         case PROTOCOL_BINARY_CMD_DECREMENTQ:
         case PROTOCOL_BINARY_CMD_INCREMENT:
@@ -1891,6 +1936,8 @@ struct testcase testcases[] = {
     { "binary_getq", test_binary_getq },
     { "binary_getk", test_binary_getk },
     { "binary_getkq", test_binary_getkq },
+    { "binary_mult", test_binary_mult },
+    { "binary_multq", test_binary_multq },
     { "binary_incr", test_binary_incr },
     { "binary_incrq", test_binary_incrq },
     { "binary_decr", test_binary_decr },
